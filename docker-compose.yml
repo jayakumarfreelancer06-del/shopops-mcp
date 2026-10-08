@@ -1,0 +1,63 @@
+name: shopops
+
+x-db-env: &db-env
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: shopops
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  RO_PASSWORD: ${RO_PASSWORD:-shopops_ro_dev}
+  RW_PASSWORD: ${RW_PASSWORD:-shopops_rw_dev}
+  APP_PASSWORD: ${APP_PASSWORD:-shopops_app_dev}
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # one-shot: create roles + schema, seed demo data if the database is empty
+  setup:
+    build: .
+    command: ["python", "-m", "shopops.setup_db"]
+    environment: *db-env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    env_file: .env
+    environment: *db-env
+    ports:
+      - "8001:8000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  ui:
+    build: ./ui
+    environment:
+      BACKEND_URL: http://api:8000
+      AUTH_URL: http://localhost:3001
+      MCP_PUBLIC_URL: http://localhost:8001/mcp
+      AUTH_SECRET: ${AUTH_SECRET:?Run `make setup` to create .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env}
+    ports:
+      - "3001:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
